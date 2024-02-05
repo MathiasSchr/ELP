@@ -56,9 +56,9 @@ var (
 
 // Constructeur de serveur
 type Server struct {
-	listener net.Listener
-	quit     chan interface{}
-	wg       sync.WaitGroup
+	listener net.Listener // Le listener pour écouter les messages du client
+	quit     chan interface{} // Le channel pour prévenir que le serveur a fini de répondre au client
+	wg       sync.WaitGroup // Le wait group pour attendre que le serveur finisse de répondre au client
 }
 
 // Constructeur de coordonnées
@@ -230,7 +230,7 @@ func astarDouble(carte [][]float64, depart Coordonnees, arrivee Coordonnees, exp
 		var courant Coordonnees
 		var test bool
 
-		// !!!Passage critique!!!
+		// !!!Passage critique!!! Le lock est dans la fonction
 		test, pointRDV = cleCommun(explore1, explore2, m) // On test si les deux process on exploré deux noeud en commun
 
 		if test { // Si c'est le cas alors les deux process se sont rejoint
@@ -359,50 +359,54 @@ func mergeMaps(map1, map2 []Coordonnees, pointRDV Coordonnees) []Coordonnees {
 // -- Fonctions liées à la connexion TCP --
 // ----------------------------------------
 
+// Fonction qui crée un nouveau serveur (ici on en créera qu'un seul dans le main)
 func NewServer(addr string) *Server {
-	s := &Server{
-	  quit: make(chan interface{}),
+	s := &Server{ // Crée un serveur avec le constructeur
+	  quit: make(chan interface{}), // Avec son channel
 	}
-	l, err := net.Listen("tcp", addr)
-	if err != nil {
+	l, err := net.Listen("tcp", addr) // Passe en mode écoute
+	if err != nil { // Gestion d'erreur
 	  log.Fatal(err)
 	}
-	s.listener = l
-	s.wg.Add(1)
-	go s.serve()
+	s.listener = l // Rajoute le listener au constructeur
+	s.wg.Add(1) // Le serveur fonctionne donc on add 1 au waitgrp
+	go s.serve() // On lance la goroutine qui accepte et gère les connexions
 	return s
   }
 
+// Goroutine qui accept les connexions des clients et qui attend que le serveur est fini de répondre au client pour fermer (si il doit fermer)
 func (s *Server) serve() {
-  defer s.wg.Done()
+  defer s.wg.Done() // Indique que le serveur a fini de gérer la connexion de ses clients
 
   for {
-    conn, err := s.listener.Accept()
-    if err != nil {
+    conn, err := s.listener.Accept() // Accepte une connexion
+    if err != nil { // Si msg d'erreur
       select {
-      case <-s.quit:
+      case <-s.quit: // Si le channel qui est non vide alors l'erreur vient du fait que le serveur est en train de fermer (voir la fonction stop()) au client donc c'est normal
         return
       default:
-        log.Println("accept error", err)
+        log.Println("accept error", err) // Sinon on renvoie l'erreur
       }
     } else {
-      s.wg.Add(1)
+      s.wg.Add(1) // Sinon on add 1 au wait grp pour attendre la fin de la réponse au client
       go func() {
-        s.handleConection(conn)
-        s.wg.Done()
+        s.handleConection(conn) // Goroutine qui répond au client
+        s.wg.Done() // Indique que le serveur a fini de répondre au client
       }()
     }
   }
 }
 
+// Fonction qui permet de fermer le serveur
 func (s *Server) Stop() {
-	close(s.quit)
-	s.listener.Close()
-	s.wg.Wait()
+	close(s.quit) // Ferme le channel 
+	s.listener.Close() // Ferme le listener
+	s.wg.Wait() // Attend que le serveur est fini de répondre au client
   }
 
+// Fonction qui prend en charge la demande du client et qui répond au client
 func (s *Server) handleConection(conn net.Conn) {
-  defer conn.Close()
+  defer conn.Close() // Ferme la connexion après avoir répondu au client
   buf := make([]byte, 1024)
   for {
     n, err := conn.Read(buf)
@@ -420,7 +424,7 @@ func (s *Server) handleConection(conn net.Conn) {
 	typeAstar, err := extraireType(string(buf[:n]))
 	var reponseStr string
 	
-	debut := time.Now()
+	debut := time.Now() // Timer
 	// Elabore la réponse
 	if typeAstar == "normal" {
 
@@ -435,7 +439,7 @@ func (s *Server) handleConection(conn net.Conn) {
 		reponseStr = fmt.Sprint("Chemin : ", chemin, "Temps : ", temps)
 
 		// Ferme le channel
-		go func() {
+		go func() { // Goroutine qui attend que le A* ait fini de se faire pour fermer le channel
 			wg.Wait()
 			close(pathChannel)
 		}()
@@ -493,6 +497,11 @@ func (s *Server) handleConection(conn net.Conn) {
   }
 }
 
+// -----------------------------------------------------------------
+// -- Fonctions complémentaires pour décoder le message du client --
+// -----------------------------------------------------------------
+
+// Extrait les coordoonnees de départ et d'arrivee du message du client
 func extraireCoordonnees(s string) (depart Coordonnees, arrivee Coordonnees, err error) {
 	// Utilisation d'une expression régulière pour extraire les coordonnées
 	compile := regexp.MustCompile("\\{(\\d+),(\\d+)\\}")
@@ -532,6 +541,7 @@ func extraireCoordonnees(s string) (depart Coordonnees, arrivee Coordonnees, err
 	return
 }
 
+// Extrait le type d'algo du message du client
 func extraireType(chaine string) (string, error) {
 	// Utilisation d'une expression régulière pour extraire le type
 	compile := regexp.MustCompile(`Type : ([a-zA-Z]+)`)
@@ -551,8 +561,8 @@ func extraireType(chaine string) (string, error) {
 
 func main() {
 
-	serveur := NewServer(HOST+":"+PORT)
-	time.Sleep(time.Second * 50)
-	serveur.Stop()
+	serveur := NewServer(HOST+":"+PORT) // On crée un serveur
+	time.Sleep(time.Second * 50) // Il reste ouvert pendant 50 secondes
+	serveur.Stop() // Il se ferme au bout de 50 secondes (si il fini de répondre à tous les clients)
 
 }
